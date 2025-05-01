@@ -28,10 +28,11 @@ public class MyOpmode extends LinearOpMode {
         drive.setPoseEstimate(startPose);
 
         TrajectorySequence trajSeq = drive.trajectorySequenceBuilder(startPose)
-                .splineTo(new Vector2d(25, 25), 0)
-                .turn(Math.toRadians(90))
-                .splineTo(new Vector2d(15,5),0)
-                .back(5)
+                .forward(25)
+                .strafeLeft(10)
+                .turn(Math.toRadians(180))
+                .strafeRight(25)
+                .back(10)
                 .build();
 
         waitForStart();
