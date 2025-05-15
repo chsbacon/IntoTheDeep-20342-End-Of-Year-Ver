@@ -1,63 +1,92 @@
 package org.firstinspires.ftc.teamcode.TeleOp_Period;
-import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
-import com.qualcomm.robotcore.hardware.IMU;
-import org.firstinspires.ftc.robotcore.external.navigation.YawPitchRollAngles;
-import com.qualcomm.hardware.rev.RevHubOrientationOnRobot;
+
+import static org.firstinspires.ftc.teamcode.drive.Setup_Classes.Drive_Train_Constants.CLAW_CLOSED;
+import static org.firstinspires.ftc.teamcode.drive.Setup_Classes.Drive_Train_Constants.CLAW_OPEN;
+import static org.firstinspires.ftc.teamcode.drive.Setup_Classes.Drive_Train_Constants.D_PAD_SPEED;
+import static org.firstinspires.ftc.teamcode.drive.Setup_Classes.Drive_Train_Constants.Kd;
+import static org.firstinspires.ftc.teamcode.drive.Setup_Classes.Drive_Train_Constants.Ki;
+import static org.firstinspires.ftc.teamcode.drive.Setup_Classes.Drive_Train_Constants.Kp;
+import static org.firstinspires.ftc.teamcode.drive.Setup_Classes.Drive_Train_Constants.SMOOTH;
 
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
-import com.qualcomm.robotcore.hardware.DcMotorEx;
-import com.qualcomm.robotcore.hardware.DcMotorSimple;
 import com.qualcomm.robotcore.util.ElapsedTime;
-//adding test for pushing to github
+
+import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
+import org.firstinspires.ftc.robotcore.external.navigation.YawPitchRollAngles;
+import org.firstinspires.ftc.teamcode.drive.Setup_Classes.Drive_Train_Setup;
+
+//NEVER TOUCH THE MAIN CLASS PLZ GO TO TEST
 @TeleOp(name="TeleOp_Main")
 public class TeleOp_Main extends LinearOpMode {
-
-    ElapsedTime runtime = new ElapsedTime();
-    IMU imu;
-    DcMotorEx LFmotor;
-    DcMotorEx RFmotor;
-    DcMotorEx LBmotor;
-    DcMotorEx RBmotor;
-    RevHubOrientationOnRobot.LogoFacingDirection LOGO_FACING_DIR =
-            RevHubOrientationOnRobot.LogoFacingDirection.BACKWARD;
-    RevHubOrientationOnRobot.UsbFacingDirection USB_FACING_DIR =
-            RevHubOrientationOnRobot.UsbFacingDirection.UP;
+    double integralSum = 0;
+    double lastError, rotation;
+    ElapsedTime pidTimer = new ElapsedTime(ElapsedTime.Resolution.MILLISECONDS);
+    double X, Y, R;
+    double lastLFPower, lastRFPower, lastLBPower, lastRBPower;
+    ElapsedTime runTime = new ElapsedTime(ElapsedTime.Resolution.SECONDS);
 
     @Override
     public void runOpMode() throws InterruptedException {
 
-        LFmotor = hardwareMap.get(DcMotorEx.class, "LFmotor");
-        RFmotor = hardwareMap.get(DcMotorEx.class, "RFmotor");
-        LBmotor = hardwareMap.get(DcMotorEx.class, "LBmotor");
-        RBmotor = hardwareMap.get(DcMotorEx.class, "RBmotor");
-
-        LFmotor.setDirection(DcMotorSimple.Direction.REVERSE);
-        LBmotor.setDirection(DcMotorSimple.Direction.REVERSE);
-        RFmotor.setDirection(DcMotorSimple.Direction.FORWARD);
-        RBmotor.setDirection(DcMotorSimple.Direction.FORWARD);
-
-        imu = hardwareMap.get(IMU.class, "imu");
-        IMU.Parameters parameters = new IMU.Parameters(new RevHubOrientationOnRobot
-                (LOGO_FACING_DIR, USB_FACING_DIR));
-        imu.initialize(parameters);
-        telemetry.addData("Status:", " Ready");
-        telemetry.update();
-        double state=0;
+        Drive_Train_Setup driveTrainSetup = new Drive_Train_Setup(hardwareMap);
 
         waitForStart();
-        runtime.reset();
+
+        runTime.reset();
+        driveTrainSetup.imu.resetYaw();
+        double target = 0;
 
         while (opModeIsActive()){
+
             double max;
-            YawPitchRollAngles angles =  imu.getRobotYawPitchRollAngles();
-            state = -angles.getYaw(AngleUnit.DEGREES);
-            double Y = -gamepad1.left_stick_y;
-            double X = gamepad1.left_stick_x;
-            double R = gamepad1.right_stick_x;
-            double[]dd=changeMe(X,Y,state);
-            X=dd[0];
-            Y=dd[1];
+
+            YawPitchRollAngles angles =  driveTrainSetup.imu.getRobotYawPitchRollAngles();
+            double state = -angles.getYaw(AngleUnit.DEGREES);
+
+            if (gamepad1.left_stick_y > .15 || gamepad1.left_stick_y < -.15) {
+                Y = -gamepad1.left_stick_y;
+            } else {
+                Y = 0;
+            }
+
+            if (gamepad1.left_stick_x > .15 || gamepad1.left_stick_x < -.15){
+                X = gamepad1.left_stick_x;
+            } else {
+                X = 0;
+            }
+
+            if (gamepad1.right_stick_x != 0 || gamepad1.right_stick_y != 0) {
+                target = Math.toDegrees(Math.atan2(gamepad1.right_stick_y, gamepad1.right_stick_x)) + 90;
+            }
+            R = pidControl(target, state);
+
+            if (gamepad1.dpad_up){
+                Y = D_PAD_SPEED;
+                X = 0;
+            } else if (gamepad1.dpad_down){
+                Y = -D_PAD_SPEED;
+                X = 0;
+            } else if (gamepad1.dpad_left){
+                Y = 0;
+                X = -D_PAD_SPEED;
+            } else if (gamepad1.dpad_right) {
+                Y = 0;
+                X = D_PAD_SPEED;
+            }
+
+            double[] pp=FOD(X,Y,state);
+
+            X=pp[0];
+            Y=pp[1];
+
+            if (X!=X)
+                X = 0;
+            if (Y!=Y)
+                Y = 0;
+            if (R!=R)
+                R = 0;
+
             double LFPower  = Y + X + R;
             double RFPower = Y - X - R;
             double LBPower   = Y - X + R;
@@ -69,72 +98,90 @@ public class TeleOp_Main extends LinearOpMode {
 
             if (max > 1.0) {
 
-                LFPower  /= max;
+                LFPower /= max;
                 RFPower /= max;
-                LBPower   /= max;
-                RBPower  /= max;
+                LBPower /= max;
+                RBPower /= max;
 
             }
 
-            double LFHun = LFPower * 100;
-            double LBHun = LBPower * 100;
-            double RFHun = RFPower * 100;
-            double RBHun = RBPower * 100;
+            LFPower = (1 - SMOOTH) * lastLFPower + SMOOTH * LFPower;
+            RFPower = (1 - SMOOTH) * lastRFPower + SMOOTH * RFPower;
+            LBPower = (1 - SMOOTH) * lastLBPower + SMOOTH * LBPower;
+            RBPower = (1 - SMOOTH) * lastRBPower + SMOOTH * RBPower;
 
-            if (LFHun >= 1){
-                LFPower = (Math.log(LFHun) / Math.log(100)) * 1;
-            } else if (LFHun <= -1){
-                LFPower = (Math.log(LFHun*-1) / Math.log(100)) * -1;
-            }
+            driveTrainSetup.LFMotor.setPower(LFPower);
+            driveTrainSetup.RFMotor.setPower(RFPower);
+            driveTrainSetup.LBMotor.setPower(LBPower);
+            driveTrainSetup.RBMotor.setPower(RBPower);
 
-            if (RFHun >= 1){
-                RFPower = (Math.log(RFHun) / Math.log(100)) * 1;
-            } else if (RFHun <= -1){
-                RFPower = (Math.log(RFHun*-1) / Math.log(100)) * -1;
-            }
+            lastLFPower = LFPower;
+            lastRFPower = RFPower;
+            lastLBPower = LBPower;
+            lastRBPower = RBPower;
 
-            if (LBHun >= 1){
-                LBPower = (Math.log(LBHun) / Math.log(100)) * 1;
-            } else if (LBHun <= -1){
-                LBPower = (Math.log(LBHun*-1) / Math.log(100)) * -1;
-            }
+            rotation = gamepad2.right_stick_y;
 
-            if (RBHun >= 1){
-                RBPower = (Math.log(RBHun) / Math.log(100)) * 1;
-            } else if (RBHun <= -1){
-                RBPower = (Math.log(RBHun*-1) / Math.log(100)) * -1;
-            }
+            driveTrainSetup.armServo1.setPower(-rotation);
+            driveTrainSetup.armServo2.setPower(rotation);
 
-            LFmotor.setPower(LFPower);
-            RFmotor.setPower(RFPower);
-            LBmotor.setPower(LBPower);
-            RBmotor.setPower(RBPower);
+            if(gamepad2.left_bumper || gamepad2.left_trigger > 0.3)
+                driveTrainSetup.grabber.setPosition(CLAW_OPEN);
+            else if(gamepad2.right_bumper || gamepad2.right_trigger > 0.3)
+                driveTrainSetup.grabber.setPosition(CLAW_CLOSED);
 
-            telemetry.addData("Status", "Time Elapsed: " + runtime.toString());
+            telemetry.addData("Target Grabber Angle: ", "%4.2f", driveTrainSetup.grabber.getPosition());
+            telemetry.addData("Arm Power:", "%4.2f", driveTrainSetup.armServo1.getPower());
+            telemetry.addData("Status", "Time Elapsed: " + runTime);
+
             telemetry.addData("Front Left/Right", "%4.2f, %4.2f", LFPower, RFPower);
             telemetry.addData("Back  Left/Right", "%4.2f, %4.2f", LBPower, RBPower);
-            telemetry.addData("State",state);
+
+            telemetry.addData("Target PID/Current", "%4.2f, %4.2f", angleWrap(target), state);
+            telemetry.addData("power/lastError", "%4.2f, %4.2f", R, lastError);
+
             telemetry.update();
         }
     }
-    public static double[] changeMe(double x, double y,double state){
-        double r=Math.sqrt(x*x+y*y);
-        double A=state;
-        double A1=180-A;
-        double a=x*Math.toDegrees(Math.cos(A))-y*Math.toDegrees(Math.cos(A));
-        double b=x*Math.toDegrees(Math.cos(A))+y*Math.toDegrees(Math.cos(A));
-        double a1=x*Math.toDegrees(Math.cos(A1))-y*Math.toDegrees(Math.cos(A1));
-        double b1=x*Math.toDegrees(Math.cos(A1))+y*Math.toDegrees(Math.cos(A1));
-        if(y!=0)
-            x=(a+a1)/(y*(a+a1));
-        else
-            x=(a+a1);
-        if(x!=0)
-            y=(b+b1)/(x*(b+b1));
-        else
-            y=b+b1;
-        double[]gg={x,y};
-        return gg;
 
+    public double pidControl(double target, double current){
+
+        double error = angleWrap((target - current));
+        integralSum += error * pidTimer.time();
+        double derivative = (error - lastError) / pidTimer.milliseconds();
+        lastError = error;
+
+        if(integralSum > 2000){
+            integralSum = 2000;
+        }
+        if(integralSum < -2000){
+            integralSum = -2000;
+        }
+
+        pidTimer.reset();
+
+        return (((error * Kp) + (derivative * Kd) + (integralSum * Ki)));
+    }
+
+    public static double angleWrap (double degrees){
+        while (degrees > 180){
+            degrees -= 360;
+        }
+        while (degrees < -180){
+            degrees += 360;
+        }
+        return degrees;
+    }
+
+    public static double[] FOD(double x, double y, double state) {
+        double r = Math.sqrt(x * x + y * y);
+        if(r!=r)
+            r=0;
+
+        double theta = Math.toDegrees(Math.atan2(y, x)) + state;
+        if (theta > 180) theta -= 360;
+        else if (theta < -180) theta += 360;
+        double thetaRad = Math.toRadians(theta);
+        return new double[]{Math.abs((r * Math.cos(thetaRad)))<0.01 ? 0.0:(r * Math.cos(thetaRad)), Math.abs((r * Math.sin(thetaRad)))<0.01 ? 0.0:(r * Math.sin(thetaRad))};
     }
 }
